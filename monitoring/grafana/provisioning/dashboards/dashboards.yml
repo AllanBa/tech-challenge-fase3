@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Triage demo
+    orgId: 1
+    folder: Triage
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

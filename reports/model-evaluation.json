@@ -1,0 +1,72 @@
+{
+  "experiment_date": "2026-10-20",
+  "task": "Medical abstract topic classification; not urgency triage",
+  "dataset": {
+    "name": "Medical Abstracts TC Corpus",
+    "source_repository": "https://github.com/sebischair/Medical-Abstracts-TC-Corpus",
+    "source_revision": "70a2d9106c724729be8b3c4ddb00d1b14ec300c8",
+    "license_declared_by_source": "CC BY-SA 3.0 Unported",
+    "train_samples": 11550,
+    "test_samples": 2888,
+    "files_sha256": {
+      "medical_tc_train.csv": "AD53AEBC682D6B87A5647F619A079BB446D286FDC93BF0159B812418F5758609",
+      "medical_tc_test.csv": "1EECEA73C9ECAD292C55E10403BD139FAB9580545D6878482997C5564D51AC05",
+      "medical_tc_labels.csv": "8A27AE03339C798103678EFA8012F744A723FF71A80F2B2C1355EE249564ADC5"
+    }
+  },
+  "model": {
+    "features": "TF-IDF word n-grams (1, 2), max_features=10000",
+    "classifier": "LogisticRegression(max_iter=500, random_state=42)",
+    "serving": "ONNX Runtime CPU"
+  },
+  "evaluation": {
+    "predictions_evaluated": "ONNX Runtime",
+    "accuracy": 0.557479,
+    "macro_f1": 0.542244,
+    "weighted_f1": 0.55568,
+    "onnx_sklearn_agreement": 0.991343,
+    "onnx_sklearn_disagreements": 25,
+    "per_class_f1": {
+      "cardiovascular diseases": 0.638158,
+      "digestive system diseases": 0.422091,
+      "general pathological conditions": 0.491663,
+      "neoplasms": 0.6875,
+      "nervous system diseases": 0.47181
+    },
+    "confusion_matrix_labels": [
+      "cardiovascular diseases",
+      "digestive system diseases",
+      "general pathological conditions",
+      "neoplasms",
+      "nervous system diseases"
+    ],
+    "confusion_matrix_rows": [
+      [388, 5, 184, 11, 22],
+      [11, 107, 142, 36, 3],
+      [163, 71, 516, 127, 84],
+      [15, 21, 136, 440, 21],
+      [29, 4, 160, 33, 159]
+    ]
+  },
+  "latency_benchmark": {
+    "sklearn_median_ms": 0.5037,
+    "onnx_runtime_median_ms": 0.0931,
+    "observed_speedup": 5.4103,
+    "method": "Median of 100 sequential single-text predict_proba/predict calls, same first 10 training texts, loaded models, single local process; not a warmed-up service load test"
+  },
+  "environment": {
+    "python": "3.12.13",
+    "operating_system": "Windows 11",
+    "cpu": "Intel Core Ultra 5 135U",
+    "memory_gb_approx": 16,
+    "scikit_learn": "1.9.1",
+    "onnxruntime": "1.31.0"
+  },
+  "limitations": [
+    "The corpus labels disease-topic categories, not urgency levels or patient triage.",
+    "This test result is not clinical validation or evidence of fitness for clinical use.",
+    "ONNX and scikit-learn predictions differed on 25 of 2888 test examples; investigate conversion parity before production use.",
+    "The single-machine latency microbenchmark is indicative only and does not represent API p95 under concurrent load.",
+    "The Kaggle mirror reports its license as Unknown; the original repository declares CC BY-SA 3.0. Verify terms for the obtained copy before redistributing data or derived artifacts."
+  ]
+}
