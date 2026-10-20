@@ -1,4 +1,6 @@
 .venv/
+.airflow-venv/
+.airflow-home/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -11,5 +13,6 @@ dist/
 artifacts/
 data/generated/
 data/medical_abstracts/
+data/integration-fixture/
 airflow/logs/
 airflow/plugins/__pycache__/

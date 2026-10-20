@@ -15,23 +15,64 @@
     }
   },
   "model": {
-    "features": "TF-IDF word n-grams (1, 2), max_features=10000",
-    "classifier": "LogisticRegression(max_iter=500, random_state=42)",
+    "configuration": "word_unigrams_balanced",
+    "features": "TF-IDF word unigrams, max_features=30000, min_df=2, sublinear_tf=true",
+    "classifier": "LogisticRegression(max_iter=500, random_state=42, class_weight=balanced)",
     "serving": "ONNX Runtime CPU"
+  },
+  "model_selection": {
+    "method": "Stratified 80/20 split from training CSV; choose by macro F1, tie-break by accuracy",
+    "random_state": 42,
+    "validation_samples": 2310,
+    "selected_configuration": "word_unigrams_balanced",
+    "candidates": [
+      {
+        "name": "word_bigram_baseline",
+        "accuracy": 0.568831,
+        "macro_f1": 0.543755,
+        "weighted_f1": 0.565472
+      },
+      {
+        "name": "word_bigram_sublinear",
+        "accuracy": 0.547186,
+        "macro_f1": 0.508718,
+        "weighted_f1": 0.539671
+      },
+      {
+        "name": "word_bigram_balanced",
+        "accuracy": 0.585281,
+        "macro_f1": 0.587752,
+        "weighted_f1": 0.577745
+      },
+      {
+        "name": "word_unigrams_balanced",
+        "accuracy": 0.597403,
+        "macro_f1": 0.600345,
+        "weighted_f1": 0.589172
+      },
+      {
+        "name": "char_3_5_baseline",
+        "accuracy": 0.58658,
+        "macro_f1": 0.563355,
+        "weighted_f1": 0.582649
+      }
+    ]
   },
   "evaluation": {
     "predictions_evaluated": "ONNX Runtime",
-    "accuracy": 0.557479,
-    "macro_f1": 0.542244,
-    "weighted_f1": 0.55568,
-    "onnx_sklearn_agreement": 0.991343,
-    "onnx_sklearn_disagreements": 25,
+    "accuracy": 0.594875,
+    "macro_f1": 0.597045,
+    "weighted_f1": 0.581048,
+    "onnx_sklearn_agreement": 0.992729,
+    "onnx_sklearn_disagreements": 21,
+    "disagreement_sklearn_top2_margin_median": 0.003917,
+    "disagreement_sklearn_top2_margin_max": 0.013721,
     "per_class_f1": {
-      "cardiovascular diseases": 0.638158,
-      "digestive system diseases": 0.422091,
-      "general pathological conditions": 0.491663,
-      "neoplasms": 0.6875,
-      "nervous system diseases": 0.47181
+      "cardiovascular diseases": 0.69592,
+      "digestive system diseases": 0.559671,
+      "general pathological conditions": 0.422018,
+      "neoplasms": 0.714607,
+      "nervous system diseases": 0.59301
     },
     "confusion_matrix_labels": [
       "cardiovascular diseases",
@@ -41,17 +82,17 @@
       "nervous system diseases"
     ],
     "confusion_matrix_rows": [
-      [388, 5, 184, 11, 22],
-      [11, 107, 142, 36, 3],
-      [163, 71, 516, 127, 84],
-      [15, 21, 136, 440, 21],
-      [29, 4, 160, 33, 159]
+      [452, 16, 88, 14, 40],
+      [5, 204, 47, 36, 7],
+      [190, 154, 322, 145, 150],
+      [17, 44, 53, 477, 42],
+      [25, 12, 55, 30, 263]
     ]
   },
   "latency_benchmark": {
-    "sklearn_median_ms": 0.5037,
-    "onnx_runtime_median_ms": 0.0931,
-    "observed_speedup": 5.4103,
+    "sklearn_median_ms": 0.4031,
+    "onnx_runtime_median_ms": 0.1735,
+    "observed_speedup": 2.3243,
     "method": "Median of 100 sequential single-text predict_proba/predict calls, same first 10 training texts, loaded models, single local process; not a warmed-up service load test"
   },
   "environment": {
@@ -65,7 +106,9 @@
   "limitations": [
     "The corpus labels disease-topic categories, not urgency levels or patient triage.",
     "This test result is not clinical validation or evidence of fitness for clinical use.",
-    "ONNX and scikit-learn predictions differed on 25 of 2888 test examples; investigate conversion parity before production use.",
+    "ONNX and scikit-learn predictions differed on 21 of 2888 test examples. In those disagreements, the median top-two scikit-learn probability margin was 0.003917 and the maximum was 0.013721; this is consistent with class-boundary sensitivity and float32 conversion, but still warrants parity testing before production use.",
+    "The selected model improved holdout macro F1 over the earlier unbalanced word-bigram baseline (0.542244 to 0.597045), while accuracy also improved (0.557479 to 0.594875); these are one fixed split and should be confirmed with repeated validation.",
+    "The general pathological conditions class remains difficult (F1 0.422018); more analysis and domain-appropriate features are needed.",
     "The single-machine latency microbenchmark is indicative only and does not represent API p95 under concurrent load.",
     "The Kaggle mirror reports its license as Unknown; the original repository declares CC BY-SA 3.0. Verify terms for the obtained copy before redistributing data or derived artifacts."
   ]

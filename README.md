@@ -56,11 +56,11 @@ profissionais.
 | API de classificação documentada | `triage/api.py`, OpenAPI em `/docs` e teste da API |
 | Pipeline de treino e otimização | `triage/training.py`, artefatos `.joblib`/`.onnx` e comparação de latência |
 | Ingestão do corpus | `triage/data.py`; CSV baixado localmente pelo usuário |
-| Automação de qualidade | `.github/workflows/ci.yml` com Ruff e pytest |
+| Automação de qualidade | `.github/workflows/ci.yml` com Ruff, pytest, DAG Airflow real e teste integrado Compose |
 | Orquestração de retreino | `airflow/dags/train_model.py` |
 | Stack de observabilidade | `docker-compose.yml`, Prometheus e dashboard Grafana provisionado |
 | Decisão técnica e operação | Este README, incluindo arquitetura, limites, comandos e proposta de cloud |
-| Demonstração de resultado | Vídeo STAR a ser gravado após executar o projeto com o corpus |
+| Demonstração de resultado | Roteiro STAR pronto em `docs/star-demo-script.md`; vídeo ainda precisa ser gravado |
 
 **Estado da entrega:** código, testes e configurações estão no repositório. O
 dataset é um insumo externo obtido conforme os termos da fonte. Uma cópia local
@@ -133,7 +133,7 @@ Medical Abstracts TC Corpus (download manual; não versionado)
                     └── FastAPI (/predict, /health, /metrics)
                           └── Prometheus ── Grafana (dashboard provisionado)
 
-GitHub Actions: Ruff + pytest em push e pull request
+GitHub Actions: qualidade, Airflow e integração Compose em push e pull request
 Airflow: validar CSV → treinar → exportar modelo ONNX
 ```
 
@@ -146,7 +146,7 @@ uma avaliação operacional em produção.
 | Decisão | Justificativa para este cenário | Alternativa considerada / limite |
 | --- | --- | --- |
 | Inferência síncrona por REST | O usuário envia um abstract e espera uma categoria; FastAPI facilita validação, documentação OpenAPI e integração com clientes. | Batch reduziria custo em grandes lotes, mas não atende a consulta interativa demonstrada. |
-| TF-IDF + Logistic Regression | Baseline supervisionado leve, rápido de treinar, funciona bem como referência para texto e permite inspecionar pesos e classes. | Transformers podem capturar semântica mais rica, mas aumentam custo, tamanho e latência; são uma evolução possível, não necessária para demonstrar o ciclo de deploy. |
+| TF-IDF unigrama + Logistic Regression balanceada | Baseline supervisionado leve; `class_weight="balanced"` compensa parcialmente o desbalanceamento. A configuração foi escolhida pela F1 macro em uma validação estratificada retirada apenas do treino. | Bigramas, TF-IDF sublinear, pesos sem balanceamento e n-gramas de caracteres foram comparados. Transformers podem captar semântica mais rica, mas elevam custo e latência. |
 | ONNX Runtime para inferência | Separa o formato de serving do treinamento scikit-learn e possibilita comparar latência na mesma máquina e entradas. | A conversão adiciona complexidade e não garante ganho; o projeto mede os dois caminhos e deve reportar o resultado observado, sem presumir aceleração. |
 | Airflow para retreinamento | A DAG explicita a validação da fonte e o treinamento como tarefas reexecutáveis e observáveis, atendendo ao requisito de orquestração. | Para uma única execução manual, um script bastaria; Airflow é usado pelo valor didático do ciclo orquestrado, não por necessidade de escala local. |
 | Prometheus + Grafana | Métricas de requisições, latência e respostas 5xx tornam o comportamento do serviço visível durante a demonstração. | Logs ajudam a investigar eventos, mas sozinhos não resumem tendências temporais nem percentis. |
@@ -269,32 +269,40 @@ A DAG `airflow/dags/train_model.py` valida o CSV e treina/exporta o modelo. O
 arquivo padrão é `data/medical_abstracts/medical_tc_train.csv`; para apontar a
 outro CSV, defina `TRIAGE_DATA_PATH`. Se
 `medical_tc_labels.csv` estiver junto do CSV, os nomes das categorias são
-resolvidos automaticamente. Instale Airflow em um ambiente Python 3.11 separado,
-usando as constraints oficiais da mesma versão:
+resolvidos automaticamente. O Apache Airflow não é suportado nativamente no
+Windows; use Linux ou WSL2 com Python 3.11 e um ambiente isolado, usando as
+constraints oficiais da mesma versão:
 
-```powershell
-$env:AIRFLOW_HOME = (Join-Path (Get-Location) "airflow")
-python -m pip install "apache-airflow==2.10.5" `
+```bash
+python3.11 -m venv .airflow-venv
+source .airflow-venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install "apache-airflow==2.10.5" \
   --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt"
 python -m pip install -e .
+export AIRFLOW_HOME="$PWD/.airflow-home"
+export AIRFLOW__CORE__DAGS_FOLDER="$PWD/airflow/dags"
+export TRIAGE_PROJECT_ROOT="$PWD"
 airflow db migrate
-airflow users create --username admin --firstname Local --lastname User `
-  --role Admin --email local@example.invalid
 airflow standalone
 ```
 
-O Airflow descobre a DAG em `airflow/dags`; se executar o scheduler a partir de
-outro diretório, configure também `AIRFLOW__CORE__DAGS_FOLDER` com o caminho
-absoluto dessa pasta. Defina `TRIAGE_PROJECT_ROOT` se a raiz do projeto não for
-inferida do arquivo DAG. Monte o dataset no mesmo caminho visível para os
-workers. O retreino grava em `artifacts/`, mas não publica ou substitui
-automaticamente um modelo já em serviço; revise e promova artefatos
-explicitamente.
+O Airflow descobre a DAG pelo caminho configurado acima. Mantenha o corpus num
+caminho acessível aos workers. O workflow do GitHub Actions baixa a revisão
+pública fixada do corpus, verifica os três SHA-256 registrados no relatório e
+executa a DAG até o fim num runner Linux. Localmente, o retreino grava em
+`artifacts/`, mas não publica ou substitui automaticamente um modelo em serviço;
+revise e promova artefatos explicitamente.
 
 ## CI, testes e medição
 
-O GitHub Actions executa lint com Ruff e testes com pytest em push e pull
-request. Para repetir localmente:
+O GitHub Actions executa três verificações em push e pull request: Ruff e
+pytest; execução da DAG Airflow com o corpus fixado e verificado por hash; e um
+teste Docker Compose de ponta a ponta. O teste Compose usa deliberadamente um
+modelo sintético pequeno, gerado apenas para integração, e verifica saúde/API,
+scrape do Prometheus e provisionamento do dashboard Grafana. Ele não substitui
+a avaliação do modelo treinado com o corpus. Para repetir localmente os testes
+de código:
 
 ```powershell
 ruff check .
@@ -307,8 +315,8 @@ em textos do conjunto de treino; quando o corpus traz `medical_tc_test.csv`,
 também calcula métricas de classificação em separado, sem treinar com o holdout.
 É uma comparação local informativa, não um SLA nem uma garantia de que ONNX será
 sempre mais rápido. Para comparações válidas, registre hardware, versões,
-tamanho de entrada, aquecimento e carga concorrente; meça também a latência fim
-a fim da API no Prometheus.
+tamanho de entrada, aquecimento e carga concorrente. O benchmark de API abaixo
+complementa a medição isolada do modelo.
 
 ### Resultado desta execução
 
@@ -320,37 +328,76 @@ usa o conjunto de teste separado do corpus; o modelo foi ajustado apenas nos
 
 | Métrica no holdout (2.888 abstracts) | Resultado |
 | --- | ---: |
-| Acurácia ONNX | 55,75% |
-| F1 macro ONNX | 54,22% |
-| F1 ponderado ONNX | 55,57% |
-| Concordância de rótulos ONNX vs scikit-learn | 99,13% (25 divergências) |
-| Mediana scikit-learn por texto | 0,5037 ms |
-| Mediana ONNX Runtime por texto | 0,0931 ms |
-| Razão observada neste microbenchmark | 5,41x |
+| Acurácia ONNX | 59,49% |
+| F1 macro ONNX | 59,70% |
+| F1 ponderado ONNX | 58,10% |
+| Concordância ONNX vs scikit-learn | 99,27% (21 divergências) |
+| Mediana scikit-learn por texto | 0,4031 ms |
+| Mediana ONNX Runtime por texto | 0,1735 ms |
+| Razão observada neste microbenchmark | 2,32x |
 
-O ONNX foi mais rápido neste microbenchmark local, mas as duas versões
-divergiram em 25 predições do teste; a acurácia reportada é a do artefato ONNX
-que serve a API. Essa diferença de conversão merece investigação antes de
-qualquer uso mais amplo. O classificador apresenta desempenho modesto, com
-variação entre classes — por exemplo, F1 de 42,21% para doenças digestivas e
-68,75% para neoplasias — e não deve ser apresentado como sistema pronto para
-produção clínica. As latências são medianas de chamadas isoladas em um processo,
-não p95 da API sob carga, e não demonstram SLA.
+Para selecionar a configuração, comparei cinco variantes em uma divisão
+estratificada 80/20 **do treino**. TF-IDF de unigramas com balanceamento obteve
+F1 macro 60,03% na validação e foi então retreinado nos 11.550 exemplos de
+treino. No teste oficial, seu F1 macro subiu de 54,22% para 59,70% e a acurácia
+de 55,75% para 59,49%, em comparação com o primeiro baseline de bigramas sem
+balanceamento. Essa comparação usa uma divisão; não é garantia de
+generalização. A classe *general pathological conditions* continua difícil
+(F1 42,20%).
+
+O ONNX foi mais rápido neste microbenchmark, mas as versões divergiram em 21
+predições do teste. Ao inspecionar essas diferenças, a margem mediana entre as
+duas classes mais prováveis no scikit-learn foi de apenas 0,39 ponto percentual
+e a maior foi de 1,37 ponto percentual. Isso é consistente com inversões de
+classe em exemplos próximos à fronteira de decisão, devido à precisão numérica
+da conversão para ONNX float32; não indica uma troca geral no mapeamento das
+classes. A acurácia reportada é a do artefato ONNX que serve a API. A avaliação
+agora registra automaticamente a contagem e as margens dessas divergências.
+Ainda é recomendável manter testes de paridade em retreinamentos. O modelo
+permanece uma referência acadêmica, não um produto clínico. As latências são
+medianas de chamadas isoladas em um processo, não p95 da API sob carga, e não
+demonstram SLA.
 
 Este é um experimento de referência numa máquina Windows 11, Python 3.12.13,
 Intel Core Ultra 5 135U, scikit-learn 1.9.1 e ONNX Runtime 1.31.0. Para uma
 comparação de performance mais rigorosa, repetir com aquecimento controlado,
-múltiplas execuções, carga concorrente e medição fim a fim pelo dashboard.
+múltiplas execuções e mais de um nível de carga concorrente.
 
-## Roteiro sugerido para vídeo STAR (5 minutos)
+### Latência fim a fim da API
 
-- **Situation:** motivação da classificação de abstracts e escopo limitado do
-  corpus.
-- **Task:** requisitos de API, CI, retreino, observabilidade e latência.
-- **Action:** arquitetura, dataset recomendado, treino TF-IDF, exportação ONNX,
-  DAG e dashboard.
-- **Result:** execução do Compose, requisições, painéis e comparação local de
-  latência; destaque que categorias de doença não significam urgência clínica.
+O script `benchmarks/benchmark_api.py` aquece a API, envia requisições
+concorrentes com uma amostra do CSV de teste e mede o tempo observado pelo
+cliente HTTP, incluindo serialização, HTTP local, middleware e inferência. Ele
+não salva o texto enviado no relatório. Com a API local em execução:
+
+```powershell
+python -m benchmarks.benchmark_api `
+  --url http://127.0.0.1:8000 `
+  --data-path data/medical_abstracts/medical_tc_test.csv `
+  --requests 500 `
+  --concurrency 10 `
+  --warmup 30 `
+  --output reports/api-load-benchmark.json
+```
+
+Uma execução de referência nesta máquina, com 1.540 caracteres por requisição,
+teve 500/500 respostas bem-sucedidas, p50 de **26,11 ms**, p95 de **58,25 ms**,
+p99 de **77,54 ms** e vazão de **317,28 req/s**. O resultado completo está em
+[reports/api-load-benchmark.json](./reports/api-load-benchmark.json).
+
+Esse ensaio foi um único processo local Uvicorn, na mesma máquina que gerou a
+carga, com uma única amostra repetida e concorrência 10. Não mede Docker, rede
+externa, múltiplas réplicas, estabilidade sob carga prolongada nem capacidade de
+produção. A métrica Prometheus e o dashboard continuam disponíveis para
+observar a API durante a demonstração; repita o benchmark com várias
+concorrências e execuções antes de comparar configurações.
+
+## Vídeo STAR
+
+O texto completo, com falas, tempos e o que exibir na tela, está em
+[docs/star-demo-script.md](./docs/star-demo-script.md). O vídeo não foi gravado
+nem publicado por este repositório: faça a gravação após executar a stack e
+substitua a nota do roteiro pelo link autorizado.
 
 ## Estrutura
 
@@ -360,10 +407,14 @@ monitoring/prometheus.yml                      Scrape da API
 monitoring/grafana/dashboards/                 Dashboard com três painéis
 monitoring/grafana/provisioning/               Datasource e dashboard provisionados
 tests/                                         Testes de CSV, API e ONNX
+benchmarks/                                    Benchmark HTTP fim a fim da API
 triage/api.py                                  API e métricas HTTP
 triage/data.py                                 Leitura do corpus e nomes das classes
 triage/predictor.py                            Inferência ONNX
 triage/training.py                             Treino, exportação e benchmark
 Dockerfile, docker-compose.yml                 Execução containerizada
-.github/workflows/ci.yml                       Lint e testes automatizados
+reports/                                       Resultados de avaliação e carga
+.github/workflows/ci.yml                       Qualidade, Airflow e integração Compose
+docs/star-demo-script.md                       Roteiro de gravação STAR
+scripts/create_integration_fixture.py          Modelo sintético exclusivo para CI
 ```

@@ -73,6 +73,7 @@ def test_training_exports_onnx_and_latency_comparison(tmp_path, monkeypatch):
     metrics = json.loads((artifact_dir / "training_metrics.json").read_text())
 
     assert result.samples == 100
+    assert result.model_configuration == "word_unigrams_balanced"
     assert set(result.classes) == {name for name, _ in classes.values()}
     assert prediction.label == "Cardiovascular diseases"
     assert 0 <= prediction.confidence <= 1
@@ -83,6 +84,8 @@ def test_training_exports_onnx_and_latency_comparison(tmp_path, monkeypatch):
     assert result.evaluation["samples"] == 10
     assert result.evaluation["accuracy"] == 1.0
     assert result.evaluation["onnx_sklearn_agreement"] == 1.0
+    assert result.evaluation["onnx_sklearn_disagreements"] == 0
+    assert result.evaluation["disagreement_sklearn_top2_margin_max"] is None
 
     monkeypatch.setenv("MODEL_PATH", str(artifact_dir / "model.onnx"))
     with TestClient(create_app()) as client:

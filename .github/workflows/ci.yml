@@ -20,3 +20,111 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest -q
+
+  airflow-dag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AIRFLOW_HOME: ${{ runner.temp }}/airflow
+      AIRFLOW__CORE__DAGS_FOLDER: ${{ github.workspace }}/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      TRIAGE_PROJECT_ROOT: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Airflow with its Python 3.11 constraints
+        run: |
+          python -m pip install "apache-airflow==2.10.5" \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt"
+          python -m pip install -e .
+      - name: Download and verify the pinned public corpus
+        run: |
+          mkdir -p data/medical_abstracts
+          base_url="https://raw.githubusercontent.com/sebischair/Medical-Abstracts-TC-Corpus/70a2d9106c724729be8b3c4ddb00d1b14ec300c8"
+          for filename in medical_tc_train.csv medical_tc_test.csv medical_tc_labels.csv; do
+            curl --fail --location --silent --show-error \
+              "$base_url/$filename" \
+              --output "data/medical_abstracts/$filename"
+          done
+          cd data/medical_abstracts
+          sha256sum --check <<'EOF'
+          AD53AEBC682D6B87A5647F619A079BB446D286FDC93BF0159B812418F5758609  medical_tc_train.csv
+          1EECEA73C9ECAD292C55E10403BD139FAB9580545D6878482997C5564D51AC05  medical_tc_test.csv
+          8A27AE03339C798103678EFA8012F744A723FF71A80F2B2C1355EE249564ADC5  medical_tc_labels.csv
+          EOF
+      - name: Run the Airflow DAG end to end
+        run: |
+          airflow db migrate
+          airflow dags test medical_abstract_topic_training 2024-01-02
+          test -s artifacts/model.onnx
+          test -s artifacts/training_metrics.json
+
+  compose-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GRAFANA_ADMIN_USER: admin
+      GRAFANA_ADMIN_PASSWORD: integration-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install project dependencies
+        run: python -m pip install -e .
+      - name: Create a synthetic test-only model fixture
+        run: python -m scripts.create_integration_fixture
+      - name: Start the Compose stack
+        run: docker compose up --build --detach
+      - name: Verify API, Prometheus, and Grafana
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8000/health
+          curl --fail --silent \
+            --header "Content-Type: application/json" \
+            --data '{"text":"synthetic cardiovascular demonstration marker"}' \
+            http://127.0.0.1:8000/predict
+          curl --fail --silent http://127.0.0.1:8000/metrics \
+            | grep -q text_classifier_http_requests_total
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --get \
+              --data-urlencode 'query=up{job="triage-api"}' \
+              http://127.0.0.1:9090/api/v1/query \
+              | jq -e '.data.result[0].value[1] == "1"' >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent --get \
+            --data-urlencode 'query=up{job="triage-api"}' \
+            http://127.0.0.1:9090/api/v1/query \
+            | jq -e '.data.result[0].value[1] == "1"'
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --user \
+              "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+              http://127.0.0.1:3000/api/dashboards/uid/medical-abstracts-api \
+              | jq -e '.dashboard.panels | length == 3' >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent --user \
+            "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+            http://127.0.0.1:3000/api/dashboards/uid/medical-abstracts-api \
+            | jq -e '.dashboard.panels | length == 3'
+      - name: Show Compose logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop the Compose stack
+        if: always()
+        run: docker compose down --volumes

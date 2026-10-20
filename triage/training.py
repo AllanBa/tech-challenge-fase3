@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import joblib
+import numpy as np
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import StringTensorType
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -28,9 +29,32 @@ from triage.predictor import OnnxPredictor
 
 
 @dataclass(frozen=True)
+class ModelConfiguration:
+    name: str
+    analyzer: str
+    ngram_range: tuple[int, int]
+    max_features: int
+    min_df: int
+    sublinear_tf: bool
+    class_weight: str | None
+
+
+MODEL_CONFIGURATION = ModelConfiguration(
+    name="word_unigrams_balanced",
+    analyzer="word",
+    ngram_range=(1, 1),
+    max_features=30_000,
+    min_df=2,
+    sublinear_tf=True,
+    class_weight="balanced",
+)
+
+
+@dataclass(frozen=True)
 class TrainingResult:
     samples: int
     classes: tuple[str, ...]
+    model_configuration: str
     sklearn_median_latency_ms: float
     onnx_median_latency_ms: float
     latency_speedup: float
@@ -55,6 +79,18 @@ def evaluate_model(
 
     sklearn_predictions = [str(label) for label in model.predict(texts)]
     onnx_predictions = [predictor.predict(text).label for text in texts]
+    sklearn_probabilities = model.predict_proba(texts)
+    disagreement_indexes = [
+        index
+        for index, (sklearn_label, onnx_label) in enumerate(
+            zip(sklearn_predictions, onnx_predictions, strict=True)
+        )
+        if sklearn_label != onnx_label
+    ]
+    disagreement_margins = [
+        float(np.diff(np.sort(sklearn_probabilities[index])[-2:])[0])
+        for index in disagreement_indexes
+    ]
     per_class = classification_report(
         expected,
         onnx_predictions,
@@ -93,6 +129,15 @@ def evaluate_model(
         "onnx_sklearn_agreement": round(
             accuracy_score(sklearn_predictions, onnx_predictions),
             6,
+        ),
+        "onnx_sklearn_disagreements": len(disagreement_indexes),
+        "disagreement_sklearn_top2_margin_median": (
+            round(float(np.median(disagreement_margins)), 6)
+            if disagreement_margins
+            else None
+        ),
+        "disagreement_sklearn_top2_margin_max": (
+            round(max(disagreement_margins), 6) if disagreement_margins else None
         ),
         "class_report": per_class,
         "confusion_matrix": {
@@ -133,8 +178,24 @@ def train_model(
 
     model = Pipeline(
         [
-            ("tfidf", TfidfVectorizer(ngram_range=(1, 2), max_features=10_000)),
-            ("classifier", LogisticRegression(max_iter=500, random_state=42)),
+            (
+                "tfidf",
+                TfidfVectorizer(
+                    analyzer=MODEL_CONFIGURATION.analyzer,
+                    ngram_range=MODEL_CONFIGURATION.ngram_range,
+                    max_features=MODEL_CONFIGURATION.max_features,
+                    min_df=MODEL_CONFIGURATION.min_df,
+                    sublinear_tf=MODEL_CONFIGURATION.sublinear_tf,
+                ),
+            ),
+            (
+                "classifier",
+                LogisticRegression(
+                    max_iter=500,
+                    random_state=42,
+                    class_weight=MODEL_CONFIGURATION.class_weight,
+                ),
+            ),
         ]
     )
     model.fit(texts, labels)
@@ -182,6 +243,7 @@ def train_model(
     result = TrainingResult(
         samples=len(texts),
         classes=classes,
+        model_configuration=MODEL_CONFIGURATION.name,
         sklearn_median_latency_ms=round(sklearn_latency, 4),
         onnx_median_latency_ms=round(onnx_latency, 4),
         latency_speedup=round(speedup, 4),
