@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      AIRFLOW_HOME: ${{ runner.temp }}/airflow
+      AIRFLOW_HOME: /tmp/airflow
       AIRFLOW__CORE__DAGS_FOLDER: ${{ github.workspace }}/airflow/dags
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       TRIAGE_PROJECT_ROOT: ${{ github.workspace }}
