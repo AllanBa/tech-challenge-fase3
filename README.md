@@ -1,6 +1,8 @@
 # Projeto aplicado — classificação temática de abstracts médicos
 
-## Resumo executivo
+Link video STAR: 
+
+## Resumo 
 
 Uma instituição hospitalar de referência — cliente fictício deste estudo de
 caso — contratou a equipe para desenvolver um protótipo que classifique
@@ -67,9 +69,9 @@ dataset é um insumo externo obtido conforme os termos da fonte. Uma cópia loca
 foi usada para este experimento, mas não foi adicionada ao Git. A proposta de
 cloud é arquitetural, não uma implantação real.
 
-## Dataset recomendado
+## Dataset 
 
-O **Medical Abstracts TC Corpus** indicado no PDF está disponível no Kaggle e
+O **Medical Abstracts TC Corpus**  no Kaggle e
 no repositório original:
 
 - [Página do corpus no Kaggle](https://www.kaggle.com/datasets/saharalaa/medical-abstracts-tc-corpus)
